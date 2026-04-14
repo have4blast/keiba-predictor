@@ -1,0 +1,23 @@
+{
+  "mcpServers": {
+    "context7": {
+      "command": "pnpm",
+      "args": ["dlx", "@upstash/context7-mcp"]
+    },
+    "playwright": {
+      "command": "pnpm",
+      "args": ["dlx", "@playwright/mcp@latest"]
+    },
+    "sequential-thinking": {
+      "command": "pnpm",
+      "args": ["dlx", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "mongodb": {
+      "command": "pnpm",
+      "args": ["dlx", "mongodb-mcp-server"],
+      "env": {
+        "MDB_MCP_CONNECTION_STRING": "mongodb://mongo:27017"
+      }
+    }
+  }
+}
