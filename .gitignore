@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 仮想環境
+.venv/
+venv/
+env/
+ENV/
+
+# 環境変数
+.env
+
+# データファイル（大容量）
+data/raw/*.csv
+data/raw/*.json
+data/features/*.parquet
+
+# DBファイル
+data/keiba.db
+data/*.db
+
+# モデルファイル
+models/*.pkl
+models/*.json
+
+# ログ
+logs/*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
