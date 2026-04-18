@@ -104,13 +104,19 @@ def compute_horse_features(df: pd.DataFrame) -> pd.DataFrame:
         lambda x: pd.Series(range(len(x)), index=x.index)
     )
 
-    # 脚質（過去5走最頻値）
-    df["running_style_mode"] = g["running_style"].transform(
-        lambda x: x.shift(1).rolling(5, min_periods=1).apply(
-            lambda vals: pd.Series(vals).mode().iloc[0] if len(vals) > 0 else np.nan,
-            raw=False,
-        )
-    )
+    # 脚質（過去5走最頻値）— 文字列なので rolling は使わず手動集計
+    def _style_mode(x: pd.Series) -> pd.Series:
+        shifted = x.shift(1)
+        result = []
+        for i in range(len(shifted)):
+            window = shifted.iloc[max(0, i - 4): i + 1].dropna()
+            if len(window) == 0:
+                result.append(np.nan)
+            else:
+                result.append(window.mode().iloc[0])
+        return pd.Series(result, index=x.index)
+
+    df["running_style_mode"] = g["running_style"].transform(_style_mode)
 
     # 直近着順推移（線形傾斜：改善=負、悪化=正）
     def _pos_slope(x: pd.Series) -> pd.Series:
