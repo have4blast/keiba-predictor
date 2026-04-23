@@ -151,3 +151,21 @@ class Course(Base):
     has_slope       = Column(Boolean, default=False)
     course_note     = Column(Text, nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow)
+
+
+class TrainingTime(Base):
+    """調教タイム（最終追い切り）"""
+    __tablename__ = "training_times"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True)
+    horse_id    = Column(String, ForeignKey("horses.horse_id"), nullable=False)
+    date        = Column(Date, nullable=False)          # 調教実施日
+    course      = Column(String, nullable=True)         # 坂路/ウッド/芝/ダート/プール
+    total_time  = Column(Float, nullable=True)          # 全体タイム（秒）
+    last_f_time = Column(Float, nullable=True)          # 最終F タイム（秒）
+    gear        = Column(String, nullable=True)         # 強め/馬なり/一杯
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_training_times_horse_date", "horse_id", "date"),
+    )

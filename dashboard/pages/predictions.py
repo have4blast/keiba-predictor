@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -30,6 +31,16 @@ def load_predictor():
         return None
     from model.predictor import Predictor
     return Predictor(str(model_dir))
+
+
+@st.cache_resource
+def load_explainer():
+    """KeibaExplainer をキャッシュロードする"""
+    model_dir = Path("models")
+    if not (model_dir / "lgbm_win.pkl").exists():
+        return None
+    from model.explainer import KeibaExplainer
+    return KeibaExplainer(str(model_dir))
 
 
 @st.cache_data(ttl=60)
@@ -242,7 +253,70 @@ if "勝利スコア" in result_df.columns and "馬名" in result_df.columns:
     st.plotly_chart(fig, use_container_width=True)
 
 # ─────────────────────────────────────────────
-# SHAP 特徴量寄与（複勝スコアも表示）
+# SHAP 特徴量寄与グラフ
+# ─────────────────────────────────────────────
+st.markdown("---")
+st.subheader("SHAP 予測根拠")
+
+explainer = load_explainer()
+if explainer is not None and "馬名" in scores_df.columns:
+    horse_options = scores_df["horse_name"].tolist() if "horse_name" in scores_df.columns else []
+    if not horse_options and "馬名" in result_df.columns:
+        horse_options = result_df["馬名"].tolist()
+
+    if horse_options:
+        selected_horse = st.selectbox("馬を選択", horse_options, key="shap_horse_select")
+
+        with st.spinner("SHAP 値を計算中..."):
+            try:
+                shap_target = st.radio("対象モデル", ["win", "place"],
+                                       format_func=lambda x: "勝利モデル" if x == "win" else "複勝モデル",
+                                       horizontal=True, key="shap_target")
+                explained_df = explainer.explain(scores_df, target=shap_target, top_n=10)
+
+                # 選択馬の行を取得
+                if "horse_name" in explained_df.columns:
+                    horse_row = explained_df[explained_df["horse_name"] == selected_horse]
+                else:
+                    horse_row = explained_df.iloc[[horse_options.index(selected_horse)]]
+
+                if not horse_row.empty:
+                    row = horse_row.iloc[0]
+                    feats, vals = [], []
+                    for rank in range(10, 0, -1):
+                        f = row.get(f"shap_feat_{rank}")
+                        v = row.get(f"shap_val_{rank}")
+                        if pd.notna(f) and pd.notna(v):
+                            feats.append(str(f))
+                            vals.append(float(v))
+
+                    if feats:
+                        colors = ["#e74c3c" if v < 0 else "#2ecc71" for v in vals]
+                        fig_shap = go.Figure(go.Bar(
+                            x=vals,
+                            y=feats,
+                            orientation="h",
+                            marker_color=colors,
+                        ))
+                        base_val = row.get("shap_base_value", 0)
+                        fig_shap.update_layout(
+                            title=f"{selected_horse} の予測根拠（SHAP値）— ベースライン: {base_val:.3f}",
+                            xaxis_title="SHAP 値（正=勝利寄与 / 負=敗北寄与）",
+                            yaxis_title="特徴量",
+                            height=400,
+                            margin=dict(l=0, r=0, t=40, b=0),
+                        )
+                        fig_shap.add_vline(x=0, line_dash="dash", line_color="gray")
+                        st.plotly_chart(fig_shap, use_container_width=True)
+            except Exception as e:
+                st.info(f"SHAP 計算をスキップしました: {e}")
+else:
+    st.info("SHAP はモデル学習後に利用可能です。")
+
+st.markdown("---")
+
+# ─────────────────────────────────────────────
+# 複勝スコアグラフ
 # ─────────────────────────────────────────────
 if "複勝スコア" in result_df.columns and "馬名" in result_df.columns:
     st.subheader("複勝スコア グラフ")

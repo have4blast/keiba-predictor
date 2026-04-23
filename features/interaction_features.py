@@ -58,6 +58,11 @@ def compute_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values(["horse_id", "date"])
     df["head_to_head_win_rate"] = _compute_h2h(df)
 
+    # 斤量×距離 交差項（長距離ほど斤量の影響が増すことを表現）
+    df["handicap_x_distance"] = (
+        df["handicap_weight"].fillna(55.0) * df["distance"].fillna(1600) / 1000.0
+    )
+
     return df
 
 

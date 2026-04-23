@@ -1,10 +1,15 @@
-"""レートリミット付きHTTPセッション"""
+"""レートリミット付きHTTPセッション + フォールバックパーサーヘルパー"""
 import os
 import time
 import random
+from typing import TYPE_CHECKING
+
 import requests
 from loguru import logger
 from dotenv import load_dotenv
+
+if TYPE_CHECKING:
+    from bs4 import BeautifulSoup, Tag
 
 load_dotenv()
 
@@ -56,3 +61,19 @@ class RateLimitedSession:
                 time.sleep(wait)
 
         raise RuntimeError(f"Max retries exceeded for {url}")
+
+
+def try_selectors(soup: "BeautifulSoup", selectors: list[str]) -> "Tag | None":
+    """
+    複数の CSS セレクタを順番に試み、最初にヒットした要素を返す。
+
+    HTML 構造変更に対する耐性を持たせるためのフォールバック機構。
+    全て失敗した場合は None を返す。
+    """
+    for sel in selectors:
+        el = soup.select_one(sel)
+        if el is not None:
+            logger.debug(f"セレクタ使用: {sel!r}")
+            return el
+    logger.warning(f"全セレクタ失敗: {selectors}")
+    return None

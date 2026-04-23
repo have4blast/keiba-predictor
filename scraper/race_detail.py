@@ -5,7 +5,7 @@ from datetime import date
 from typing import Any
 from loguru import logger
 from bs4 import BeautifulSoup
-from scraper.base import RateLimitedSession
+from scraper.base import RateLimitedSession, try_selectors
 
 
 def _parse_time(time_str: str) -> float | None:
@@ -120,8 +120,12 @@ def fetch_race_detail(
     if grade_tag:
         race_info["grade"] = grade_tag.get_text(strip=True)
 
-    # ラップタイム
-    lap_table = soup.find("table", class_="race_lap_cell")
+    # ラップタイム（複数セレクタでフォールバック）
+    lap_table = try_selectors(soup, [
+        "table.race_lap_cell",
+        "table.RaceLapCell",
+        "div.race_lap table",
+    ])
     lap_times: list[float] = []
     if lap_table:
         for td in lap_table.find_all("td"):
@@ -132,8 +136,13 @@ def fetch_race_detail(
     if lap_times:
         race_info["lap_times"] = json.dumps(lap_times)
 
-    # ── 出走・結果テーブル ────────────────────────────────────
-    result_table = soup.find("table", class_=re.compile(r"race_table_01"))
+    # ── 出走・結果テーブル（複数セレクタでフォールバック）────────────
+    result_table = try_selectors(soup, [
+        "table.race_table_01",
+        "table.RaceTable01",
+        "div#race_result table",
+        "div.result_table table",
+    ])
     entries: list[dict[str, Any]] = []
 
     if not result_table:

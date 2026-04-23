@@ -71,4 +71,13 @@ def compute_race_features(df: pd.DataFrame) -> pd.DataFrame:
         lambda r: _pace_score(r.get("lap_times", ""), r.get("distance", 0)), axis=1
     )
 
+    # ペース係数改良: コース×距離グループの過去平均 pace_score との差分（リーク防止: shift済み）
+    df = df.sort_values(["venue", "surface", "distance", "date"])
+    df["pace_ratio_vs_course_avg"] = (
+        df.groupby(["venue", "surface", "distance"], sort=False)["pace_score"]
+        .transform(lambda x: x.shift(1).rolling(20, min_periods=1).mean())
+        .fillna(1.0)
+    )
+    df["pace_ratio_vs_course_avg"] = df["pace_score"] - df["pace_ratio_vs_course_avg"]
+
     return df

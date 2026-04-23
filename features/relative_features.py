@@ -31,4 +31,12 @@ def compute_relative_features(df: pd.DataFrame) -> pd.DataFrame:
     if "win_odds_rank_diff" not in df.columns:
         df["win_odds_rank_diff"] = 0.0
 
+    # 上がり3F偏差（レース内相対）
+    # last_3f_avg_5 は horse_features で shift(1) 済みなのでリーク安全
+    if "last_3f_avg_5" in df.columns:
+        race_mean_3f = df.groupby("race_id")["last_3f_avg_5"].transform("mean")
+        df["last3f_vs_race_avg"] = df["last_3f_avg_5"] - race_mean_3f
+    else:
+        df["last3f_vs_race_avg"] = 0.0
+
     return df
