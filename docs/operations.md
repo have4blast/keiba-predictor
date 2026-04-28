@@ -1,7 +1,7 @@
 # 運用手順書 — 競馬予想AI
 
 > **対象者**: 本システムの日常運用担当者  
-> **最終更新**: 2026-04-14
+> **最終更新**: 2026-04-23（0002_enhancement 反映）
 
 ---
 
@@ -173,7 +173,7 @@ streamlit run dashboard/app.py
 
 ---
 
-## 5. モデル再学習
+## 5. モデル再学習・チューニング
 
 ### 推奨タイミング
 
@@ -196,6 +196,24 @@ python scripts/train_model.py \
 # ログ確認
 tail -f logs/train_model.log
 ```
+
+### Optuna ハイパーパラメータ自動チューニング
+
+AUC が伸び悩んでいる場合や、データ量が大幅に増えた場合に実行します。
+
+```bash
+# 勝利モデルを50トライアルで探索し、最適パラメータで自動再学習
+python scripts/tune_model.py --trials 50 --target win
+
+# 複勝モデルを100トライアルで探索（再学習はスキップ）
+python scripts/tune_model.py --trials 100 --target place --no-train
+
+# ログ確認
+tail -f logs/tune_model.log
+cat models/tuning_report.json
+```
+
+> **目安**: `--trials 50` で約 5〜10 分。CPU コア数が多い環境では `--trials 100` 推奨。
 
 ### 再学習後の確認
 
@@ -313,6 +331,8 @@ sudo systemctl start keiba-dashboard
 | `logs/scrape_upcoming.log` | 出走表収集ログ |
 | `logs/build_features.log` | 特徴量生成ログ |
 | `logs/train_model.log` | モデル学習ログ |
+| `logs/tune_model.log` | Optuna チューニングログ |
+| `logs/validation.log` | データ品質検証ログ（WARNING 以上のみ） |
 | `logs/cron.log` | cron 定期実行ログ |
 
 ### 確認コマンド
@@ -358,9 +378,31 @@ EOF
 ```
 
 **対応**:
-1. `scraper/race_detail.py` の CSS セレクタを netkeiba.com の最新構造に合わせて修正
-2. User-Agent ヘッダーを変更（`scraper/base.py` の `DEFAULT_HEADERS`）
-3. `--resume` オプションで再開: `python scripts/scrape_historical.py --resume`
+1. `scraper/base.py` の `try_selectors()` に新セレクタ候補を追加する
+2. `scraper/race_detail.py` のフォールバックリストに新 CSS セレクタを追記する
+3. User-Agent ヘッダーを変更（`scraper/base.py` の `_USER_AGENT`）
+4. `--resume` オプションで再開: `python scripts/scrape_historical.py --resume`
+
+### Q6. データ品質エラーが出る
+
+```bash
+# 全テーブルを検証
+python scripts/validate_data.py
+
+# 特定レースのみ検証
+python scripts/validate_data.py --race 202301010101
+
+# 警告もエラーとして扱う厳格モード（CI 用途）
+python scripts/validate_data.py --strict
+```
+
+**よくある警告と対処**:
+
+| 警告 | 原因 | 対処 |
+|------|------|------|
+| `win_odds < 1.0` | スクレイプ値の誤り | 該当レースを再スクレイプ |
+| `last_3f_time=NaN 高欠損率` | 旧レースデータに上がり3F なし | 許容範囲内なら無視 |
+| `handicap_weight > 62.0` | 障害レース（斤量が高い） | 障害除外フィルタを検討 |
 
 ### Q2. 特徴量生成でエラーが出る
 
@@ -465,7 +507,8 @@ models/
 ├── lgbm_win.pkl           ← 最新モデル
 ├── lgbm_place.pkl         ← 最新モデル
 ├── encoder.pkl            ← 最新エンコーダ
-├── training_report.json   ← 最新レポート
+├── training_report.json   ← 学習レポート（AUC・ROI）
+├── tuning_report.json     ← Optuna チューニング結果（任意）
 └── archive/
     ├── 20240601/          ← 月次バックアップ
     │   ├── lgbm_win.pkl
@@ -519,6 +562,12 @@ python scripts/scrape_upcoming.py --date 2024-06-15
 # === 特徴量・学習 ===
 python scripts/build_features.py
 python scripts/train_model.py
+python scripts/tune_model.py --trials 50 --target win   # Optuna チューニング
+
+# === データ品質チェック ===
+python scripts/validate_data.py                         # 全テーブル検証
+python scripts/validate_data.py --race 202301010101     # 特定レースのみ
+python scripts/validate_data.py --strict                # 警告もエラー扱い
 
 # === ダッシュボード ===
 streamlit run dashboard/app.py
@@ -527,5 +576,7 @@ streamlit run dashboard/app.py --server.port 8502
 # === 確認・デバッグ ===
 tail -f logs/scrape_upcoming.log
 tail -f logs/train_model.log
+tail -f logs/tune_model.log
+tail -f logs/validation.log
 grep -i error logs/*.log | tail -20
 ```
