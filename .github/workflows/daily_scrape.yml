@@ -1,0 +1,81 @@
+name: 日次 — 出走表取得・特徴量生成
+
+on:
+  schedule:
+    - cron: '0 23 * * *'   # UTC 23:00 = JST 08:00
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '対象日 (YYYY-MM-DD)。省略時は翌日'
+        required: false
+        default: ''
+
+concurrency:
+  group: daily-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape-and-features:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存インストール
+        run: pip install -r requirements.txt
+
+      # DB とモデルを前回実行分から復元
+      - name: キャッシュ復元 (data/)
+        uses: actions/cache/restore@v4
+        with:
+          path: data/keiba.db
+          key: keiba-db-${{ github.run_number }}
+          restore-keys: |
+            keiba-db-
+
+      - name: ディレクトリ確保
+        run: mkdir -p data/raw data/features models logs
+
+      # 出走表取得
+      - name: 翌日出走表取得
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python scripts/scrape_upcoming.py --date "${{ github.event.inputs.date }}"
+          else
+            python scripts/scrape_upcoming.py
+          fi
+        continue-on-error: true   # ネットワーク問題でも後続を実行
+
+      # データ品質チェック（失敗でも継続、ログのみ記録）
+      - name: データ品質チェック
+        run: python scripts/validate_data.py
+        continue-on-error: true
+
+      # 特徴量生成
+      - name: 特徴量生成
+        run: python scripts/build_features.py
+
+      # DB を次回のためにキャッシュ保存
+      - name: キャッシュ保存 (data/)
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: data/keiba.db
+          key: keiba-db-${{ github.run_number }}
+
+      # ログをアーティファクトとして保存
+      - name: ログ保存
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: daily-logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 7

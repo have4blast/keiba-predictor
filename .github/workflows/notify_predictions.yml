@@ -1,0 +1,71 @@
+name: 日次 — LINE 予測通知
+
+on:
+  schedule:
+    - cron: '0 0 * * *'    # UTC 00:00 = JST 09:00
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '対象日 (YYYY-MM-DD)。省略時は今日'
+        required: false
+        default: ''
+      dry_run:
+        description: '送信せずメッセージのみ確認する'
+        type: boolean
+        default: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存インストール
+        run: pip install -r requirements.txt
+
+      # 最新の DB とモデルを復元
+      - name: キャッシュ復元 (data/ + models/)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/keiba.db
+            models/
+          key: keiba-train-${{ github.run_number }}
+          restore-keys: |
+            keiba-train-
+            keiba-db-
+
+      - name: ディレクトリ確保
+        run: mkdir -p data/raw data/features models logs
+
+      # LINE 通知送信
+      - name: LINE 予測通知
+        env:
+          LINE_NOTIFY_TOKEN: ${{ secrets.LINE_NOTIFY_TOKEN }}
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            ARGS="$ARGS --date ${{ github.event.inputs.date }}"
+          fi
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          python scripts/notify_line.py $ARGS
+
+      # ログ保存
+      - name: ログ保存
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: notify-logs-${{ github.run_number }}
+          path: logs/notify_line.log
+          retention-days: 7

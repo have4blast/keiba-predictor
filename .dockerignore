@@ -1,0 +1,33 @@
+# データ・モデル（ホスト側ボリュームでマウントする）
+data/
+models/
+logs/
+
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# 開発ツール
+.env
+*.local
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ドキュメント・計画ファイル（イメージ不要）
+docs/
+aidlc-docs/
+*.md

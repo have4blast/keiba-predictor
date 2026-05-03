@@ -1,0 +1,81 @@
+version: "3.9"
+
+# data/ models/ logs/ はホスト側と共有する
+x-volumes: &common-volumes
+  - ./data:/app/data
+  - ./models:/app/models
+  - ./logs:/app/logs
+
+services:
+
+  # ──────────────────────────────────────────
+  # Streamlit ダッシュボード（常時起動）
+  # ──────────────────────────────────────────
+  dashboard:
+    build: .
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    volumes: *common-volumes
+    env_file: .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ──────────────────────────────────────────
+  # 翌日出走表取得（手動 or cron から起動）
+  # docker compose --profile scrape run --rm scraper
+  # ──────────────────────────────────────────
+  scraper:
+    build: .
+    command: ["python", "scripts/scrape_upcoming.py"]
+    volumes: *common-volumes
+    env_file: .env
+    profiles: ["scrape"]
+
+  # ──────────────────────────────────────────
+  # 過去データ一括収集
+  # docker compose --profile scrape run --rm historical \
+  #   python scripts/scrape_historical.py --start 2023-01-01 --end 2023-12-31
+  # ──────────────────────────────────────────
+  historical:
+    build: .
+    command: ["python", "scripts/scrape_historical.py", "--resume"]
+    volumes: *common-volumes
+    env_file: .env
+    profiles: ["scrape"]
+
+  # ──────────────────────────────────────────
+  # 特徴量生成
+  # docker compose --profile build run --rm features
+  # ──────────────────────────────────────────
+  features:
+    build: .
+    command: ["python", "scripts/build_features.py"]
+    volumes: *common-volumes
+    env_file: .env
+    profiles: ["build"]
+
+  # ──────────────────────────────────────────
+  # モデル学習
+  # docker compose --profile train run --rm trainer
+  # ──────────────────────────────────────────
+  trainer:
+    build: .
+    command: ["python", "scripts/train_model.py"]
+    volumes: *common-volumes
+    env_file: .env
+    profiles: ["train"]
+
+  # ──────────────────────────────────────────
+  # データ品質チェック
+  # docker compose --profile validate run --rm validator
+  # ──────────────────────────────────────────
+  validator:
+    build: .
+    command: ["python", "scripts/validate_data.py"]
+    volumes: *common-volumes
+    env_file: .env
+    profiles: ["validate"]

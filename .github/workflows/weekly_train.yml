@@ -1,0 +1,161 @@
+name: 週次 — モデル再学習・AUC 退行検知
+
+on:
+  schedule:
+    - cron: '0 17 * * 0'   # UTC 日曜 17:00 = JST 月曜 02:00
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'AUC 退行があっても強制更新する'
+        type: boolean
+        default: false
+
+concurrency:
+  group: weekly-train
+  cancel-in-progress: false
+
+jobs:
+  train-and-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: チェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 依存インストール
+        run: pip install -r requirements.txt
+
+      # DB・モデルを前回実行分から復元
+      - name: キャッシュ復元 (data/ + models/)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            data/keiba.db
+            data/features/
+            models/
+          key: keiba-train-${{ github.run_number }}
+          restore-keys: |
+            keiba-train-
+            keiba-db-
+
+      - name: ディレクトリ確保
+        run: mkdir -p data/raw data/features models logs
+
+      # 前回の AUC を記録
+      - name: 前回 AUC を記録
+        id: prev_auc
+        run: |
+          if [ -f models/training_report.json ]; then
+            PREV=$(python -c "
+          import json
+          r = json.load(open('models/training_report.json'))
+          print(r['cv_results']['win_auc_mean'])
+          ")
+            echo "value=$PREV" >> $GITHUB_OUTPUT
+            echo "前回 Win AUC: $PREV"
+          else
+            echo "value=0.0" >> $GITHUB_OUTPUT
+            echo "初回学習"
+          fi
+
+      # 特徴量生成（最新データから）
+      - name: 特徴量生成
+        run: python scripts/build_features.py
+
+      # モデル学習
+      - name: モデル学習
+        run: python scripts/train_model.py
+
+      # AUC 退行検知
+      - name: AUC 退行チェック
+        id: auc_check
+        run: |
+          python - <<'PYEOF'
+          import json, os, sys
+
+          prev = float("${{ steps.prev_auc.outputs.value }}" or "0")
+          with open("models/training_report.json") as f:
+              curr_report = json.load(f)
+          curr = curr_report["cv_results"]["win_auc_mean"]
+          diff = prev - curr
+
+          print(f"前回 Win AUC : {prev:.4f}")
+          print(f"今回 Win AUC : {curr:.4f}")
+          print(f"差分         : {diff:+.4f}")
+
+          threshold = 0.02
+          force = "${{ github.event.inputs.force }}" == "true"
+
+          if diff > threshold and not force:
+              print(f"::error::AUC 退行検知 ({diff:.4f} > {threshold}) — モデル更新をスキップします")
+              print(f"::notice::強制更新する場合は workflow_dispatch で force=true を指定してください")
+              sys.exit(1)
+          elif diff > threshold and force:
+              print(f"::warning::AUC 退行 ({diff:.4f}) ですが force=true のため続行します")
+          else:
+              print("AUC 退行なし — モデルを更新します")
+          PYEOF
+
+      # モデルキャッシュを更新（退行なしの場合のみ）
+      - name: キャッシュ保存 (data/ + models/)
+        uses: actions/cache/save@v4
+        if: success()
+        with:
+          path: |
+            data/keiba.db
+            data/features/
+            models/
+          key: keiba-train-${{ github.run_number }}
+
+      # 学習結果サマリーをジョブサマリーに表示
+      - name: 学習結果サマリー
+        if: always()
+        run: |
+          python - <<'PYEOF'
+          import json, pathlib
+
+          p = pathlib.Path("models/training_report.json")
+          if not p.exists():
+              print("training_report.json なし")
+              exit()
+
+          r = json.load(open(p))
+          cv = r.get("cv_results", {})
+          bt = r.get("backtest", {})
+
+          summary = f"""## 学習結果サマリー
+
+          | 指標 | 値 |
+          |------|-----|
+          | Win AUC | {cv.get('win_auc_mean', 0):.4f} ± {cv.get('win_auc_std', 0):.4f} |
+          | Place AUC | {cv.get('place_auc_mean', 0):.4f} ± {cv.get('place_auc_std', 0):.4f} |
+          | 単勝的中率 | {bt.get('win_accuracy', 0):.1%} |
+          | 単勝 ROI | {bt.get('win_roi', 0):.1%} |
+          | 総レース数 | {bt.get('total_races', 0):,} |
+          | 学習日時 | {r.get('trained_at', '不明')[:19]} |
+          """
+          print(summary)
+
+          # GitHub Actions Job Summary に書き込み
+          import os
+          ghs = os.environ.get("GITHUB_STEP_SUMMARY")
+          if ghs:
+              with open(ghs, "a") as f:
+                  f.write(summary)
+          PYEOF
+
+      # ログ保存
+      - name: ログ保存
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: train-logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 14
