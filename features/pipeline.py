@@ -144,10 +144,39 @@ class FeaturePipeline:
 
     def _load_from_db(self) -> pd.DataFrame:
         """SQLite から全データを JOIN で読み込む"""
+        db_path = Path("data/keiba.db")
+        if not db_path.exists():
+            raise FileNotFoundError(
+                f"DB が見つかりません ({db_path})。"
+                "scrape_historical.py を実行してデータを収集してください。"
+            )
+
         session = get_session()
         try:
             result = session.execute(text(_LOAD_SQL))
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        except Exception as exc:
+            if "no such table" in str(exc).lower():
+                raise RuntimeError(
+                    "DB にテーブルが存在しません。"
+                    "scrape_historical.py を実行してデータを収集してください。"
+                ) from exc
+            raise
         finally:
             session.close()
+
+        if len(df) == 0:
+            raise RuntimeError(
+                "DB にレースデータが存在しません。"
+                "scrape_historical.py を実行してデータを収集してください。"
+            )
+
+        finished = df["finish_position"].notna().sum()
+        if finished == 0:
+            raise RuntimeError(
+                "DB に終了済みレースが存在しません（finish_position=NULL のみ）。"
+                "scrape_historical.py で過去レースデータを収集してください。"
+            )
+
+        logger.info(f"DB 読み込み: 全{len(df):,}行 (終了済み: {finished:,}行)")
         return df

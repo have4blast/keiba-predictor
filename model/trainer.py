@@ -101,6 +101,19 @@ class KeibaTrainer:
         df = df[df["finish_position"].notna()].copy()
         logger.info(f"学習データ: {len(df):,} rows")
 
+        if len(df) == 0:
+            raise RuntimeError(
+                "学習データが0件です。"
+                "build_features.py を実行して特徴量を生成してください。"
+            )
+
+        n_races = df["race_id"].nunique()
+        if n_races < self.n_splits:
+            raise RuntimeError(
+                f"レース数 ({n_races}) が GroupKFold の分割数 ({self.n_splits}) より少ないです。"
+                f"データを追加するか --splits {max(2, n_races)} を指定してください。"
+            )
+
         # 目的変数
         df["win_flag"]   = (df["finish_position"] == 1).astype(int)
         df["place_flag"] = (df["finish_position"] <= 3).astype(int)

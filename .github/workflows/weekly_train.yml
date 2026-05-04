@@ -65,6 +65,39 @@ jobs:
             echo "初回学習"
           fi
 
+      # DB データ確認（特徴量生成前のガード）
+      - name: DB データ確認
+        run: |
+          python - <<'PYEOF'
+          import sys
+          from pathlib import Path
+          from sqlalchemy import create_engine, text
+
+          db = Path("data/keiba.db")
+          if not db.exists():
+              print("::error::data/keiba.db が見つかりません。daily_scrape ワークフローを先に実行してください。")
+              sys.exit(1)
+
+          engine = create_engine(f"sqlite:///{db}")
+          try:
+              with engine.connect() as c:
+                  n = c.execute(text(
+                      "SELECT COUNT(*) FROM race_entries WHERE finish_position IS NOT NULL"
+                  )).scalar()
+          except Exception as e:
+              print(f"::error::DB チェック失敗: {e}")
+              print("::notice::scrape_historical.py でデータを収集してください。")
+              sys.exit(1)
+
+          MIN_ENTRIES = 100
+          if n < MIN_ENTRIES:
+              print(f"::error::学習用エントリが不足しています (終了済み: {n} 件 / 必要: {MIN_ENTRIES} 件以上)")
+              print("::notice::scrape_historical.py でより多くの過去レースデータを収集してください。")
+              sys.exit(1)
+
+          print(f"DB データ確認OK: 終了済みエントリ {n:,} 件")
+          PYEOF
+
       # 特徴量生成（最新データから）
       - name: 特徴量生成
         run: python scripts/build_features.py
