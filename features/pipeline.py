@@ -153,8 +153,21 @@ class FeaturePipeline:
 
         session = get_session()
         try:
+            # 診断: 各テーブルの件数を先に確認する
+            for tbl in ["races", "race_entries", "horses"]:
+                try:
+                    cnt = session.execute(text(f"SELECT COUNT(*) FROM {tbl}")).scalar()
+                    logger.debug(f"  {tbl}: {cnt:,} 行")
+                except Exception as te:
+                    raise RuntimeError(
+                        f"テーブル {tbl} が存在しません: {te}。"
+                        "scrape_historical.py を実行してデータを収集してください。"
+                    ) from te
+
             result = session.execute(text(_LOAD_SQL))
             df = pd.DataFrame(result.fetchall(), columns=result.keys())
+        except RuntimeError:
+            raise
         except Exception as exc:
             if "no such table" in str(exc).lower():
                 raise RuntimeError(
@@ -167,8 +180,9 @@ class FeaturePipeline:
 
         if len(df) == 0:
             raise RuntimeError(
-                "DB にレースデータが存在しません。"
-                "scrape_historical.py を実行してデータを収集してください。"
+                "DB の races・horses・race_entries JOIN が 0 件です。"
+                "race_entries にデータがあっても races または horses が空の場合もこのエラーになります。"
+                " generate_sample_data.py または scrape_historical.py を実行してください。"
             )
 
         finished = df["finish_position"].notna().sum()

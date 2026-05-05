@@ -75,27 +75,45 @@ jobs:
 
           db = Path("data/keiba.db")
           if not db.exists():
-              print("::error::data/keiba.db が見つかりません。daily_scrape ワークフローを先に実行してください。")
+              print("::error::data/keiba.db が見つかりません。")
+              print("::notice::初回は scripts/generate_sample_data.py または scrape_historical.py を実行してキャッシュを作成してください。")
               sys.exit(1)
 
           engine = create_engine(f"sqlite:///{db}")
           try:
               with engine.connect() as c:
-                  n = c.execute(text(
-                      "SELECT COUNT(*) FROM race_entries WHERE finish_position IS NOT NULL"
-                  )).scalar()
+                  # 各テーブルの件数を表示（診断情報）
+                  for tbl in ["races", "race_entries", "horses", "jockeys", "trainers"]:
+                      try:
+                          cnt = c.execute(text(f"SELECT COUNT(*) FROM {tbl}")).scalar()
+                          print(f"  {tbl}: {cnt:,} 行")
+                      except Exception as te:
+                          print(f"::error::テーブル {tbl} が存在しません: {te}")
+                          print("::notice::scrape_historical.py または generate_sample_data.py を実行してください。")
+                          sys.exit(1)
+
+                  # _LOAD_SQL と同じ JOIN 条件で件数を確認
+                  n = c.execute(text("""
+                      SELECT COUNT(*)
+                      FROM race_entries re
+                      JOIN races r ON re.race_id = r.race_id
+                      JOIN horses h ON re.horse_id = h.horse_id
+                      WHERE re.finish_position IS NOT NULL
+                  """)).scalar()
+          except SystemExit:
+              raise
           except Exception as e:
               print(f"::error::DB チェック失敗: {e}")
-              print("::notice::scrape_historical.py でデータを収集してください。")
+              print("::notice::scrape_historical.py または generate_sample_data.py を実行してください。")
               sys.exit(1)
 
           MIN_ENTRIES = 100
           if n < MIN_ENTRIES:
-              print(f"::error::学習用エントリが不足しています (終了済み: {n} 件 / 必要: {MIN_ENTRIES} 件以上)")
-              print("::notice::scrape_historical.py でより多くの過去レースデータを収集してください。")
+              print(f"::error::学習可能なエントリが不足しています (races+horses JOIN済み終了レース: {n} 件 / 必要: {MIN_ENTRIES} 件以上)")
+              print("::notice::scrape_historical.py または generate_sample_data.py を実行してキャッシュを更新してください。")
               sys.exit(1)
 
-          print(f"DB データ確認OK: 終了済みエントリ {n:,} 件")
+          print(f"DB データ確認OK: JOIN済み終了エントリ {n:,} 件")
           PYEOF
 
       # 特徴量生成（最新データから）
