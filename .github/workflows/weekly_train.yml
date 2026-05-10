@@ -65,73 +65,82 @@ jobs:
             echo "初回学習"
           fi
 
-      # DB データ確認（不足時はサンプルデータ生成にフォールバック）
-      - name: DB データ確認
+      # DB データ確認・サンプル補完（データ不足時はその場で生成して検証）
+      - name: DB データ確認・サンプル補完
         run: |
           python - <<'PYEOF'
-          import sys, os
+          import subprocess, sys
           from pathlib import Path
           from sqlalchemy import create_engine, text
 
-          GITHUB_ENV = os.environ.get("GITHUB_ENV", "")
+          MIN_ENTRIES = 100
+          DB_PATH = Path("data/keiba.db")
 
-          def set_env(key, val):
-              if GITHUB_ENV:
-                  with open(GITHUB_ENV, "a") as f:
-                      f.write(f"{key}={val}\n")
-
-          db = Path("data/keiba.db")
-          if not db.exists():
-              print("::notice::data/keiba.db が見つかりません — サンプルデータを生成します")
-              set_env("DB_HAS_DATA", "false")
-              sys.exit(0)
-
-          engine = create_engine(f"sqlite:///{db}")
-          try:
+          def count_joined_entries(engine):
               with engine.connect() as c:
-                  # 各テーブルの件数を表示（診断情報）
                   for tbl in ["races", "race_entries", "horses", "jockeys", "trainers"]:
                       try:
                           cnt = c.execute(text(f"SELECT COUNT(*) FROM {tbl}")).scalar()
                           print(f"  {tbl}: {cnt:,} 行")
                       except Exception as te:
-                          print(f"::notice::テーブル {tbl} が存在しません ({te}) — サンプルデータを生成します")
-                          set_env("DB_HAS_DATA", "false")
-                          sys.exit(0)
-
-                  # _LOAD_SQL と同じ JOIN 条件で件数を確認
-                  n = c.execute(text("""
+                          print(f"::notice::テーブル {tbl} が存在しません ({te})")
+                          return 0
+                  return c.execute(text("""
                       SELECT COUNT(*)
                       FROM race_entries re
-                      JOIN races r ON re.race_id = r.race_id
+                      JOIN races  r ON re.race_id  = r.race_id
                       JOIN horses h ON re.horse_id = h.horse_id
                       WHERE re.finish_position IS NOT NULL
                   """)).scalar()
-          except SystemExit:
-              raise
-          except Exception as e:
-              print(f"::notice::DB チェック失敗 ({e}) — サンプルデータを生成します")
-              set_env("DB_HAS_DATA", "false")
-              sys.exit(0)
 
-          MIN_ENTRIES = 100
-          if n < MIN_ENTRIES:
-              print(f"::warning::JOIN済み終了エントリ {n} 件 < {MIN_ENTRIES} 件 — サンプルデータで補完します")
-              set_env("DB_HAS_DATA", "false")
+          # --- 初回チェック ---
+          need_sample = False
+          if not DB_PATH.exists():
+              print("::notice::data/keiba.db が見つかりません — サンプルデータを生成します")
+              need_sample = True
           else:
-              print(f"DB データ確認OK: JOIN済み終了エントリ {n:,} 件")
-              set_env("DB_HAS_DATA", "true")
-          PYEOF
+              engine = create_engine(f"sqlite:///{DB_PATH}")
+              try:
+                  n = count_joined_entries(engine)
+              except Exception as e:
+                  print(f"::notice::DB チェック失敗 ({e}) — サンプルデータを生成します")
+                  n = 0
+              if n < MIN_ENTRIES:
+                  print(f"::warning::JOIN済み終了エントリ {n} 件 < {MIN_ENTRIES} 件 — サンプルデータを生成します")
+                  need_sample = True
+              else:
+                  print(f"DB データ確認OK: JOIN済み終了エントリ {n:,} 件")
 
-      # サンプルデータ生成（実データ不足時のフォールバック）
-      - name: サンプルデータ生成（フォールバック）
-        if: env.DB_HAS_DATA != 'true'
-        run: |
-          echo "::warning::実データが不足しているためサンプルデータを使用します（モデル精度はダミー値になります）"
-          python scripts/generate_sample_data.py \
-            --races 300 \
-            --start 2022-01-01 \
-            --end 2023-06-30
+          # --- サンプルデータ生成 ---
+          if need_sample:
+              print("::warning::実データが不足しているためサンプルデータを使用します（モデル精度はダミー値になります）")
+              result = subprocess.run(
+                  [
+                      sys.executable, "scripts/generate_sample_data.py",
+                      "--races", "300",
+                      "--start", "2022-01-01",
+                      "--end",   "2023-06-30",
+                  ],
+                  capture_output=False,
+              )
+              if result.returncode != 0:
+                  print("::error::generate_sample_data.py が失敗しました")
+                  sys.exit(1)
+
+              # 生成後に再検証
+              engine = create_engine(f"sqlite:///{DB_PATH}")
+              try:
+                  n_after = count_joined_entries(engine)
+              except Exception as e:
+                  print(f"::error::サンプルデータ生成後の DB チェック失敗: {e}")
+                  sys.exit(1)
+
+              if n_after < MIN_ENTRIES:
+                  print(f"::error::サンプルデータ生成後も JOIN済み終了エントリが {n_after} 件しかありません")
+                  sys.exit(1)
+
+              print(f"サンプルデータ生成完了: JOIN済み終了エントリ {n_after:,} 件")
+          PYEOF
 
       # 特徴量生成（最新データから）
       - name: 特徴量生成
