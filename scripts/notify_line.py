@@ -152,10 +152,11 @@ def main(date: str | None, max_races: int, token: str | None, dry_run: bool) -> 
     """当日レースの上位3頭を LINE Notify で送信する"""
     logger.add("logs/notify_line.log", rotation="5 MB")
 
-    target_date = date or str(date.today() if date is None else date)
     if date is None:
         from datetime import date as _date
         target_date = str(_date.today())
+    else:
+        target_date = date
 
     logger.info(f"予測通知開始: date={target_date}, max_races={max_races}")
 
