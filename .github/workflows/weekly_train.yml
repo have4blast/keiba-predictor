@@ -45,8 +45,14 @@ jobs:
             keiba-train-
             keiba-db-
 
-      - name: ディレクトリ確保
-        run: mkdir -p data/raw data/features models logs
+      # 絶対パスで DATABASE_URL を確定する（以降の全ステップが同じファイルを参照）
+      - name: 環境確定
+        run: |
+          mkdir -p data/raw data/features models logs
+          DB_ABS="$(pwd)/data/keiba.db"
+          echo "DATABASE_URL=sqlite:///${DB_ABS}" >> $GITHUB_ENV
+          echo "DB_ABS=${DB_ABS}" >> $GITHUB_ENV
+          echo "DB 絶対パス: ${DB_ABS}"
 
       # 前回の AUC を記録
       - name: 前回 AUC を記録
@@ -69,39 +75,51 @@ jobs:
       - name: DB データ確認・サンプル補完
         run: |
           python - <<'PYEOF'
-          import subprocess, sys
+          import os, subprocess, sys
           from pathlib import Path
           from sqlalchemy import create_engine, text
+          from sqlalchemy.pool import NullPool
 
+          # 絶対パスを環境変数から取得（環境確定ステップで設定済み）
+          DB_PATH = Path(os.environ["DB_ABS"])
           MIN_ENTRIES = 100
-          DB_PATH = Path("data/keiba.db")
 
-          def count_joined_entries(engine):
-              with engine.connect() as c:
-                  for tbl in ["races", "race_entries", "horses", "jockeys", "trainers"]:
-                      try:
-                          cnt = c.execute(text(f"SELECT COUNT(*) FROM {tbl}")).scalar()
-                          print(f"  {tbl}: {cnt:,} 行")
-                      except Exception as te:
-                          print(f"::notice::テーブル {tbl} が存在しません ({te})")
-                          return 0
-                  return c.execute(text("""
-                      SELECT COUNT(*)
-                      FROM race_entries re
-                      JOIN races  r ON re.race_id  = r.race_id
-                      JOIN horses h ON re.horse_id = h.horse_id
-                      WHERE re.finish_position IS NOT NULL
-                  """)).scalar()
+          print(f"DB パス: {DB_PATH}")
+          print(f"DB 存在: {DB_PATH.exists()}")
+
+          def make_engine(path):
+              # NullPool: 接続をプールせず都度開閉 → サブプロセスとの競合を防ぐ
+              return create_engine(f"sqlite:///{path}", poolclass=NullPool)
+
+          def count_joined_entries(path):
+              engine = make_engine(path)
+              try:
+                  with engine.connect() as c:
+                      for tbl in ["races", "race_entries", "horses", "jockeys", "trainers"]:
+                          try:
+                              cnt = c.execute(text(f"SELECT COUNT(*) FROM {tbl}")).scalar()
+                              print(f"  {tbl}: {cnt:,} 行")
+                          except Exception as te:
+                              print(f"::notice::テーブル {tbl} が存在しません ({te})")
+                              return 0
+                      return c.execute(text("""
+                          SELECT COUNT(*)
+                          FROM race_entries re
+                          JOIN races  r ON re.race_id  = r.race_id
+                          JOIN horses h ON re.horse_id = h.horse_id
+                          WHERE re.finish_position IS NOT NULL
+                      """)).scalar()
+              finally:
+                  engine.dispose()
 
           # --- 初回チェック ---
           need_sample = False
           if not DB_PATH.exists():
-              print("::notice::data/keiba.db が見つかりません — サンプルデータを生成します")
+              print("::notice::DB ファイルが存在しません — サンプルデータを生成します")
               need_sample = True
           else:
-              engine = create_engine(f"sqlite:///{DB_PATH}")
               try:
-                  n = count_joined_entries(engine)
+                  n = count_joined_entries(DB_PATH)
               except Exception as e:
                   print(f"::notice::DB チェック失敗 ({e}) — サンプルデータを生成します")
                   n = 0
@@ -117,6 +135,7 @@ jobs:
               result = subprocess.run(
                   [
                       sys.executable, "scripts/generate_sample_data.py",
+                      "--db",    str(DB_PATH),   # 絶対パスを明示的に渡す
                       "--races", "300",
                       "--start", "2022-01-01",
                       "--end",   "2023-06-30",
@@ -127,10 +146,9 @@ jobs:
                   print("::error::generate_sample_data.py が失敗しました")
                   sys.exit(1)
 
-              # 生成後に再検証
-              engine = create_engine(f"sqlite:///{DB_PATH}")
+              # 生成後に再検証（新規エンジンで）
               try:
-                  n_after = count_joined_entries(engine)
+                  n_after = count_joined_entries(DB_PATH)
               except Exception as e:
                   print(f"::error::サンプルデータ生成後の DB チェック失敗: {e}")
                   sys.exit(1)
@@ -144,10 +162,14 @@ jobs:
 
       # 特徴量生成（最新データから）
       - name: 特徴量生成
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
         run: python scripts/build_features.py
 
       # モデル学習
       - name: モデル学習
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
         run: python scripts/train_model.py
 
       # AUC 退行検知
