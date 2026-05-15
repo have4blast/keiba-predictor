@@ -1,8 +1,6 @@
 name: 週次 — モデル再学習・AUC 退行検知
 
 on:
-  schedule:
-    - cron: '0 17 * * 0'   # UTC 日曜 17:00 = JST 月曜 02:00
   workflow_dispatch:
     inputs:
       force:
